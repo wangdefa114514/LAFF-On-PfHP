@@ -34,21 +34,35 @@ void MyGemm( int m, int n, int k, double *A, int ldA,
 void LoopFive( int m, int n, int k, double *A, int ldA,
 		   double *B, int ldB, double *C, int ldC )
 {
-  for ( int j=0; j<n; j+=NC ) {
-    int jb = min( NC, n-j );    /* Last loop may not involve a full block */
+  int NC_per_thread=((NC/omp_get_max_threads())/NR)*NR; // Ensure NC_per_thread is a multiple of NR
+  int balanced_part = (n/(NC_per_thread * omp_get_max_threads())) * NC_per_thread * omp_get_max_threads(); 
+  int remaining_part = n - balanced_part;
+  int NC_remaining_thread=((remaining_part/omp_get_max_threads())/NR)*NR; // Ensure NC_remaining_thread is a multiple of NR
+  if (NC_remaining_thread==0){
+    NC_remaining_thread=NR; // Ensure at least one NR block is processed
+  }
+  #pragma omp parallel for
+  for ( int j=0; j<balanced_part; j+=NC_per_thread ) {
+    LoopFour( m, NC_per_thread, k, A, ldA, &beta( 0,j ), ldB, &gamma( 0,j ), ldC );
+  }
+  
+  #pragma omp parallel for
+  for ( int j=balanced_part; j<n; j+=NC_remaining_thread ){
+    int jb = min( NC_remaining_thread, n-j );    /* Last loop may not involve a full block */
     LoopFour( m, jb, k, A, ldA, &beta( 0,j ), ldB, &gamma( 0,j ), ldC );
-  } 
+  }
 }
 
 void LoopFour( int m, int n, int k, double *A, int ldA, double *B, int ldB,
 	       double *C, int ldC )
 {
-  double *Btilde = ( double * ) malloc( KC * NC * sizeof( double ) );
-  
+
+  int max_threads=omp_get_max_threads();
+  double *Btilde = ( double * ) malloc( KC * NC * sizeof( double )*max_threads );
   for ( int p=0; p<k; p+=KC ) {
     int pb = min( KC, k-p );    /* Last loop may not involve a full block */
-    PackPanelB_KCxNC( pb, n, &beta( p, 0 ), ldB, Btilde );
-    LoopThree( m, n, pb, &alpha( 0, p ), ldA, Btilde, C, ldC );
+    PackPanelB_KCxNC( pb, n, &beta( p, 0 ), ldB, &Btilde[omp_get_thread_num()*KC*NC] );
+    LoopThree( m, n, pb, &alpha( 0, p ), ldA, &Btilde[omp_get_thread_num()*KC*NC], C, ldC );
   }
 
   free( Btilde); 
@@ -56,17 +70,12 @@ void LoopFour( int m, int n, int k, double *A, int ldA, double *B, int ldB,
 
 void LoopThree( int m, int n, int k, double *A, int ldA, double *Btilde, double *C, int ldC )
 {
-  int max_threads=omp_get_max_threads();
-  double *Atilde = ( double * ) malloc( MC * KC * sizeof( double )*max_threads );
-
-  
-
-
-  #pragma omp parallel for     
+  double *Atilde = ( double * ) malloc( MC * KC * sizeof( double ) );
+       
   for ( int i=0; i<m; i+=MC ) {
     int ib = min( MC, m-i );    /* Last loop may not involve a full block */
-    PackBlockA_MCxKC( ib, k, &alpha( i, 0 ), ldA, &Atilde[MC * KC *omp_get_thread_num()] );
-    LoopTwo( ib, n, k, &Atilde[MC * KC *omp_get_thread_num()], Btilde, &gamma( i,0 ), ldC );
+    PackBlockA_MCxKC( ib, k, &alpha( i, 0 ), ldA, Atilde );
+    LoopTwo( ib, n, k, Atilde, Btilde, &gamma( i,0 ), ldC );
   }
 
   free( Atilde);
