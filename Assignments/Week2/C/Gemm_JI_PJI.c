@@ -20,11 +20,8 @@ void MyGemm( int m, int n, int k, double *A, int ldA,
     int jb = min( n-j, NB );    /* Size for "finge" block */ 
     for ( int i=0; i<m; i+=MB ){
       int ib = min( m-i, MB );    /* Size for "finge" block */ 
-      for ( int p=0; p<k; p+=KB ){ 
-        int pb = min( k-p, KB );    /* Size for "finge" block */ 
-        Gemm_PJI( ib, jb, pb, &alpha( i,p ), ldA, &beta( p,j ), ldB,
+      Gemm_PJI( ib, jb, k, &alpha( i,0 ), ldA, &beta( 0,j ), ldB,
 		                   &gamma( i,j ), ldC );
-      }
     }
   }
 }
